@@ -1,0 +1,92 @@
+{
+    "database": {
+        "root_account": {
+            "host": "localhost",
+            "user": "root",
+            "password": "root"
+        },
+        "account": {
+            "host": "localhost",
+            "user": "digital_photo_frame",
+            "password": ""
+        },
+        "name": "digital_photo_frame",
+        "key": {
+            "type": "TINYINT UNSIGNED PRIMARY KEY",
+            "value": 0
+        }
+    },
+    "modes": {
+        "current": {
+            "type": "TINYINT UNSIGNED NOT NULL",
+            "initial_value": 0,
+            "values": {
+                "standby": {
+                    "value": 0,
+                    "start_command": "sudo systemctl start dpf_standby",
+                    "stop_command": null,
+                    "restart_command": null,
+                    "wait_for": null
+                },
+                "display": {
+                    "value": 1,
+                    "start_command": "sudo systemctl start dpf_display",
+                    "stop_command": "sudo systemctl stop dpf_display",
+                    "restart_command": "sudo systemctl restart dpf_display",
+                    "wait_for": null
+                }
+            }
+        }
+    },
+    "control": {
+        "file_query_interval": 1e-2,
+        "mode_switch_timeout": 15.0,
+        "lock_commands": {
+            "acquire": "rm -f $DPF_MODE_LOCK_FILE",
+            "release": "touch $DPF_MODE_LOCK_FILE"
+        }
+    },
+    "display_settings": {
+        "files": {
+            "group": "files",
+            "name": "Bildemapper",
+            "type": "TEXT",
+            "initial_value": null,
+            "textarea": {
+                "rows": 4,
+                "placeholder": "Format: <bruker>/<sti til bildemappe> (én mappe per linje)"
+            }
+        },
+        "times": {
+            "group": "selection",
+            "name": "Tider å inkludere bilder fra",
+            "type": "TEXT",
+            "initial_value": null,
+            "textarea": {
+                "rows": 4,
+                "placeholder": "Format: [[dd.]mm.]åååå[-[[dd.]mm.]åååå] (ett tidsintervall per linje)"
+            }
+        },
+        "delay": {
+            "group": "display",
+            "name": "Visningstid per bilde (sek)",
+            "type": "INT UNSIGNED NOT NULL",
+            "initial_value": 20,
+            "number": {
+                "min": 1,
+                "max": 999
+            }
+        },
+        "randomize": {
+            "group": "display",
+            "name": "Vis i vilkårlig rekkefølge",
+            "type": "BOOLEAN NOT NULL",
+            "initial_value": false
+        }
+    },
+    "display_groups": {
+        "files": "Filer",
+        "selection": "Seleksjon",
+        "display": "Visning"
+    }
+}

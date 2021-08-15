@@ -8,14 +8,13 @@ import subprocess
 from inotify.adapters import Inotify
 from inotify.constants import IN_MODIFY, IN_CLOSE
 
-SCRIPT_PATH = pathlib.Path(os.path.dirname(os.path.realpath(__file__)))
+SCRIPT_DIR = pathlib.Path(os.path.dirname(os.path.realpath(__file__)))
 
-CONFIG_FILE_PATH = SCRIPT_PATH / 'frame_config.txt'
-LOG_FILE_PATH = SCRIPT_PATH / 'log.txt'
 
-logging.basicConfig(level=logging.INFO,
-                    filename=LOG_FILE_PATH,
-                    format='%(asctime)s: %(message)s')
+def setup_logging(filename, level=logging.INFO):
+    logging.basicConfig(level=level,
+                        filename=filename,
+                        format='%(asctime)s: %(message)s')
 
 
 def log_info(message):
@@ -26,6 +25,11 @@ def log_error(message, abort=False):
     logging.error('ERROR: %s', message)
     if abort:
         sys.exit(1)
+
+
+def setup_screen(username):
+    os.environ['DISPLAY'] = ':0'
+    os.environ['XAUTHORITY'] = f'/home/{username}/.Xauthority'
 
 
 class Time:
@@ -210,35 +214,36 @@ class NextcloudFileLocator:
         return valid_path
 
 
-class Config:
+class Settings:
     def __init__(self,
                  file_locator,
-                 file_path=CONFIG_FILE_PATH,
                  default_folders=None,
                  default_times=ANY_TIME_PERIOD,
-                 default_delay=10):
+                 default_delay=10,
+                 default_randomize=False,
+                 default_feh_flags=[
+                     '--preload', '--borderless', '--fullscreen',
+                     '--auto-zoom', '--auto-rotate', '--hide-pointer'
+                 ]):
         self._file_locator = file_locator
-        self._file_path = pathlib.Path(file_path)
 
         self.default_folders = default_folders
         self.default_times = default_times
         self.default_delay = default_delay
+        self.default_randomize = default_randomize
+
+        self._default_feh_flags = default_feh_flags
 
         self._folders = default_folders
         self._times = default_times
         self._delay = default_delay
+        self._randomize = default_randomize
 
         self._change_flags = {'any': False}
 
-        self._folder_re = re.compile(r'^folders:(.+)$', flags=re.MULTILINE)
-
-        self._time_re_1 = re.compile(r'^time:(.+)$', flags=re.MULTILINE)
-        self._time_re_2 = re.compile(
-            r'(any|((?:\d\d?[\.\/])?(?:\d\d?[\.\/])?(?:\d{4})(?:\s*-\s*(?:\d\d?[\.\/])?(?:\d\d?[\.\/])?(?:\d{4}))?))'
-        )
-
-        self._delay_re = re.compile(r'^delay:\s*([0-9]+(?:\.[0-9]+)?)\s*$',
-                                    flags=re.MULTILINE)
+        self._time_text_re = re.compile(
+            r'(any|((?:\d\d?[\.\/])?(?:\d\d?[\.\/])?(?:\d{4})(?:\s*-\s*(?:\d\d?[\.\/])?(?:\d\d?[\.\/])?(?:\d{4}))?))',
+            flags=re.IGNORECASE)
 
     @property
     def file_locator(self):
@@ -261,52 +266,51 @@ class Config:
         return self._times
 
     @property
+    def randomize(self):
+        return self._randomize
+
+    @property
     def changed(self):
         return self.get_change_flag('any')
 
-    def get_change_flag(self, flag):
-        return self._change_flags.get(flag, False)
+    @property
+    def feh_delay_arguments(self):
+        return ['--slideshow-delay', f'{self.delay}']
 
-    def reset_change_flags(self):
-        for flag in self._change_flags:
-            self._change_flags[flag] = False
+    @property
+    def feh_randomize_arguments(self):
+        return ['--randomize'] if self.randomize else []
 
-    def _register_change(self, flag):
-        self._change_flags[flag] = True
-        self._change_flags['any'] = True
+    @property
+    def feh_arguments(self):
+        return self._default_feh_flags + self.feh_delay_arguments + self.feh_randomize_arguments
 
-    def parse_file(self):
-        if not self.file_path.is_file():
-            log_error(f'Config file \'{self.file_path}\' does not exist.',
-                      abort=True)
-        with open(self.file_path, 'r') as f:
-            text = f.read()
-
-        folders = self._parse_folders(text)
+    def _parse_settings(self, resource):
+        folders = self._parse_folders(resource)
         if folders != self.folders:
             self._folders = folders
             self._register_change('folders')
             log_info(f'Using folders: {", ".join(map(str, self.folders))}.')
 
-        times = self._parse_times(text)
+        times = self._parse_times(resource)
         if times != self.times:
             self._times = times
             self._register_change('times')
             log_info(f'Using time periods: {self.times}.')
 
-        delay = self._parse_delay(text)
+        delay = self._parse_delay(resource)
         if delay != self.delay:
             self._delay = delay
             self._register_change('delay')
             log_info(f'Using delay: {self.delay:g} s.')
 
-    def _parse_folders(self, text):
-        match = self._folder_re.search(text)
-        if not match:
-            log_error(f'No \'folders\' entry in {self.file_path}.')
-            return self.folders
-        folders_text = match[1]
+        randomize = self._parse_randomize(resource)
+        if randomize != self.randomize:
+            self._randomize = randomize
+            self._register_change('randomize')
+            log_info(f'Using randomize: {self.randomize}')
 
+    def _process_folders_text(self, folders_text):
         folder_strings = map(str.strip, folders_text.split(','))
         folder_paths = map(pathlib.Path, folder_strings)
 
@@ -321,16 +325,67 @@ class Config:
 
         return valid_paths
 
-    def _parse_times(self, text):
-        match = self._time_re_1.search(text)
-        if not match:
-            log_error(f'No valid \'time\' entry in {self.file_path}.')
-            return self.times
-        matches = [match[0] for match in self._time_re_2.findall(match[1])]
+    def _process_times_text(self, time_text):
+        matches = [match[0] for match in self._time_text_re.findall(time_text)]
         if not matches:
             log_error(f'No valid \'time\' entry in {self.file_path}.')
             return self.times
         return TimePeriods(*matches)
+
+    def get_change_flag(self, flag):
+        return self._change_flags.get(flag, False)
+
+    def reset_change_flags(self):
+        for flag in self._change_flags:
+            self._change_flags[flag] = False
+
+    def _register_change(self, flag):
+        self._change_flags[flag] = True
+        self._change_flags['any'] = True
+
+
+class SettingsFile(Settings):
+    def __init__(self, file_path, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._file_path = pathlib.Path(file_path)
+
+        self._folder_re = re.compile(r'^folders:(.+)$',
+                                     flags=re.MULTILINE | re.IGNORECASE)
+
+        self._time_re = re.compile(r'^time:(.+)$',
+                                   flags=re.MULTILINE | re.IGNORECASE)
+
+        self._delay_re = re.compile(r'^delay:\s*([0-9]+(?:\.[0-9]+)?)\s*$',
+                                    flags=re.MULTILINE | re.IGNORECASE)
+
+        self._randomize_re = re.compile(r'random(?:i[sz]e)?\s*$',
+                                        flags=re.MULTILINE | re.IGNORECASE)
+
+    def read_settings(self):
+        if not self.file_path.is_file():
+            log_error(f'Config file \'{self.file_path}\' does not exist.',
+                      abort=True)
+        with open(self.file_path, 'r') as f:
+            text = f.read()
+
+        self._parse_settings(text)
+
+    def _parse_folders(self, text):
+        match = self._folder_re.search(text)
+        if not match:
+            log_error(f'No \'folders\' entry in {self.file_path}.')
+            return self.folders
+        folders_text = match[1]
+
+        return self._process_folders_text(folders_text)
+
+    def _parse_times(self, text):
+        match = self._time_re.search(text)
+        if not match:
+            log_error(f'No valid \'time\' entry in {self.file_path}.')
+            return self.times
+
+        return self._process_times_text(match[1])
 
     def _parse_delay(self, text):
         match = self._delay_re.search(text)
@@ -340,14 +395,59 @@ class Config:
         delay = float(match[1])
         return delay
 
+    def _parse_randomize(self, text):
+        if self._randomize_re.search(text):
+            return True
+        else:
+            return False
+
+
+class SettingsDatabase(Settings):
+    def __init__(self, database, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._database = database
+        self._table_name = 'display_settings'
+
+    def read_settings(self):
+        with self._database as database:
+            self._parse_settings(database)
+
+    def _parse_folders(self, database):
+        folders_text = database.read_values_from_table(self._table_name,
+                                                       'folders')
+        if folders_text is None:
+            return None
+        return self._process_folders_text(','.join(folders_text.split('\n')))
+
+    def _parse_times(self, database):
+        times_text = database.read_values_from_table(self._table_name, 'times')
+        if times_text is None:
+            return None
+        return self._process_times_text(','.join(times_text.split('\n')))
+
+    def _parse_delay(self, database):
+        delay = database.read_values_from_table(self._table_name, 'delay')
+        if delay is None:
+            return self.delay
+        else:
+            return float(delay)
+
+    def _parse_randomize(self, database):
+        randomize = database.read_values_from_table(self._table_name,
+                                                    'randomize')
+        if randomize is None:
+            return self.randomize
+        else:
+            return bool(randomize)
+
 
 class FileManager:
-    def __init__(self, config):
-        self._config = config
-        self.config.parse_file()
-        self.config.reset_change_flags()
+    def __init__(self, settings):
+        self._settings = settings
+        self.settings.read_config()
+        self.settings.reset_change_flags()
 
-        self._file_list_path = SCRIPT_PATH / '.filelist.txt'
+        self._file_list_path = SCRIPT_DIR / '.filelist.txt'
 
         self._file_times = {}
         self._all_file_times = {}
@@ -359,20 +459,24 @@ class FileManager:
         self.update_file_list()
 
     @property
-    def config(self):
-        return self._config
+    def settings(self):
+        return self._settings
 
     @property
     def file_list_path(self):
         return self._file_list_path
 
-    def reparse_config_file(self):
-        self.config.parse_file()
-        if self.config.get_change_flag('folders'):
+    @property
+    def feh_arguments(self):
+        return self.settings.feh_arguments + ['-f', str(self.file_list_path)]
+
+    def reread_settings(self):
+        self.settings.read_settings()
+        if self.settings.get_change_flag('folders'):
             self._update_file_times()
-        if self.config.get_change_flag('times'):
+        if self.settings.get_change_flag('times'):
             self._update_filtered_file_times()
-        self.config.reset_change_flags()
+        self.settings.reset_change_flags()
 
     def update_file_list(self):
         with open(self.file_list_path, 'w') as f:
@@ -380,8 +484,8 @@ class FileManager:
 
     def _obtain_filename_list(self):
         filename_list = subprocess.check_output([
-            SCRIPT_PATH / 'find_image_files.sh',
-            *list(map(str, self.config.folders))
+            SCRIPT_DIR / 'find_image_files.sh',
+            *list(map(str, self.settings.folders))
         ],
                                                 text=True).split('\n')[:-1]
         return filename_list
@@ -403,30 +507,27 @@ class FileManager:
 
         log_info(f'Adding {len(new_filenames_list)} new files.')
         new_times_list = subprocess.check_output(
-            [SCRIPT_PATH / 'find_image_times.sh', *new_filenames_list],
+            [SCRIPT_DIR / 'find_image_times.sh', *new_filenames_list],
             text=True).split('\n')[:-1]
         for new_filename, new_time_string in zip(new_filenames_list,
                                                  new_times_list):
+            splitted = new_time_string.split()
+            if splitted[1][:2] == '24':
+                new_time_string = '{} {}'.format(splitted[0],
+                                                 '00' + splitted[1][2:])
             self._file_times[new_filename] = datetime.datetime.fromisoformat(
                 new_time_string)
             self._all_file_times[new_filename] = self._file_times[new_filename]
 
     def _update_filtered_file_times(self):
         self._filtered_file_times = dict(
-            filter(lambda item: self.config.times.includes(item[1]),
+            filter(lambda item: self.settings.times.includes(item[1]),
                    self._file_times.items()))
 
 
 class Displayer:
-    def __init__(self,
-                 file_manager,
-                 default_feh_flags=[
-                     '--preload', '--borderless', '--fullscreen',
-                     '--auto-zoom', '--auto-rotate', '--hide-pointer'
-                 ]):
+    def __init__(self, file_manager):
         self._file_manager = file_manager
-
-        self._feh_flags = list(default_feh_flags)
 
         self._process = None
 
@@ -437,7 +538,7 @@ class Displayer:
     def start(self):
         self.stop()
         self._process = subprocess.Popen(
-            ['feh', *self._feh_flags, '-f', self.file_manager.file_list_path])
+            ['feh', *self.file_manager.feh_arguments])
 
     def stop(self):
         if self._process is not None:
@@ -446,14 +547,16 @@ class Displayer:
 
 
 if __name__ == "__main__":
-
-    config = Config(NextcloudFileLocator(check_validity=True))
-    file_manager = FileManager(config)
+    setup_logging(SCRIPT_DIR / 'log.txt')
+    setup_screen('admin')
+    settings = SettingsFile(SCRIPT_DIR / 'frame_config.txt',
+                            NextcloudFileLocator(check_validity=True))
+    file_manager = FileManager(settings)
     displayer = Displayer(file_manager)
     displayer.start()
 
     # notifier = Inotify(block_duration_s=1)
-    # notifier.add_watch(str(config.file_path), mask=(IN_MODIFY | IN_CLOSE))
+    # notifier.add_watch(str(settings.file_path), mask=(IN_MODIFY | IN_CLOSE))
 
     # for event in notifier.event_gen(yield_nones=False):
-    #     file_manager.reparse_config_file()
+    #     file_manager.reread_settings()
