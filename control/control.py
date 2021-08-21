@@ -22,13 +22,14 @@ def read_settings(mode, config, database):
 
     settings = list(config[table_name].keys())
 
-    values = database.read_values_from_table(table_name, settings)
+    with database as open_database:
+        values = open_database.read_values_from_table(table_name, settings)
 
     return dict(zip(settings, values))
 
 
-def update_mode_in_database(mode, config, database):
-    database.update_values_in_table(
+def update_mode_in_database(mode, config, open_database):
+    open_database.update_values_in_table(
         'modes',
         dict(id=0,
              current=config['modes']['current']['values'][mode]['value']))
