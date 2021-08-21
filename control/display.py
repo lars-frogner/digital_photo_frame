@@ -20,8 +20,8 @@ def display_with_context(mode, config, database):
     settings = dpf.SettingsDatabase(
         database, dpf.NextcloudFileLocator(check_validity=True))
     file_manager = dpf.FileManager(settings)
-    displayer = dpf.Displayer(file_manager)
-    displayer.start()
+    with dpf.Displayer(file_manager) as displayer:
+        displayer.wait()
 
 
 if __name__ == '__main__':

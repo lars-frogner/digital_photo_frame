@@ -4,6 +4,7 @@ import logging
 import re
 import pathlib
 import datetime
+import time
 import subprocess
 from inotify.adapters import Inotify
 from inotify.constants import IN_MODIFY, IN_CLOSE
@@ -535,12 +536,30 @@ class Displayer:
     def file_manager(self):
         return self._file_manager
 
-    def start(self):
-        self.stop()
+    def __enter__(self):
+        self._start()
+        return self
+
+    def __exit__(self, *args):
+        self._stop()
+
+    def wait(self):
+        if self._process is None:
+            return
+        while self._process.poll() is None:
+            time.sleep(0.1)
+        if self._process.returncode == 0:
+            return
+        else:
+            raise RuntimeError(
+                f'feh exited with error code {self._process.returncode}')
+
+    def _start(self):
+        self._stop()
         self._process = subprocess.Popen(
             ['feh', *self.file_manager.feh_arguments])
 
-    def stop(self):
+    def _stop(self):
         if self._process is not None:
             self._process.terminate()
             self._process = None
@@ -552,8 +571,8 @@ if __name__ == "__main__":
     settings = SettingsFile(SCRIPT_DIR / 'frame_config.txt',
                             NextcloudFileLocator(check_validity=True))
     file_manager = FileManager(settings)
-    displayer = Displayer(file_manager)
-    displayer.start()
+    with Displayer(file_manager) as displayer:
+        displayer.wait()
 
     # notifier = Inotify(block_duration_s=1)
     # notifier.add_watch(str(settings.file_path), mask=(IN_MODIFY | IN_CLOSE))
