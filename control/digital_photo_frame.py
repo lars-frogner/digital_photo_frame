@@ -31,6 +31,8 @@ def log_error(message, abort=False):
 def setup_screen(username):
     os.environ['DISPLAY'] = ':0'
     os.environ['XAUTHORITY'] = f'/home/{username}/.Xauthority'
+    if 'HOME' not in os.environ:
+        os.environ['HOME'] = '/home/{username}'
 
 
 class Time:
