@@ -6,6 +6,7 @@ import pathlib
 import datetime
 import time
 import subprocess
+import json
 from inotify.adapters import Inotify
 from inotify.constants import IN_MODIFY, IN_CLOSE
 
@@ -458,15 +459,22 @@ class SettingsDatabase(Settings):
 
 
 class FileManager:
-    def __init__(self, settings):
+    def __init__(self, settings, cache_data=True):
         self._settings = settings
-        self.settings.read_config()
+        self.settings.read_settings()
         self.settings.reset_change_flags()
 
-        self._file_list_path = SCRIPT_DIR / '.filelist.txt'
+        self._cache_data = cache_data
 
-        self._file_times = {}
+        self._file_list_path = SCRIPT_DIR / '.filelist.txt'
+        self._file_data_path = SCRIPT_DIR / '.filedata.json'
+
         self._all_file_times = {}
+        if self._cache_data:
+            self._read_cached_file_times()
+        self._filenames = {}
+        self._read_filenames()
+        self._file_times = {}
         self._update_file_times()
 
         self._filtered_file_times = {}
@@ -489,6 +497,7 @@ class FileManager:
     def reread_settings(self):
         self.settings.read_settings()
         if self.settings.get_change_flag('folders'):
+            self._read_filenames()
             self._update_file_times()
         if self.settings.get_change_flag('times'):
             self._update_filtered_file_times()
@@ -496,7 +505,18 @@ class FileManager:
 
     def update_file_list(self):
         with open(self.file_list_path, 'w') as f:
-            f.write('\n'.join(self._file_times.keys()))
+            f.write('\n'.join(self._filtered_file_times.keys()))
+
+    def _read_cached_file_times(self):
+        with open(self._file_data_path, 'r') as f:
+            self._all_file_times = json.load(f)
+
+    def _write_cached_file_times(self):
+        with open(self._file_data_path, 'w') as f:
+            json.dump(self._all_file_times, f)
+
+    def _read_filenames(self):
+        self._filenames = self._obtain_filename_list()
 
     def _obtain_filename_list(self):
         filename_list = subprocess.check_output([
@@ -506,39 +526,45 @@ class FileManager:
                                                 text=True).split('\n')[:-1]
         return filename_list
 
-    def _update_file_times(self):
-        filename_list = self._obtain_filename_list()
+    def _obtain_file_time_list(self, filename_list):
+        file_time_list = subprocess.check_output(
+            [SCRIPT_DIR / 'find_image_times.sh', *filename_list],
+            text=True).split('\n')[:-1]
 
+        def process_time_string(time_string):
+            splitted = time_string.split()
+            if splitted[1][:2] == '24':
+                time_string = '{} {}'.format(splitted[0],
+                                             '00' + splitted[1][2:])
+            return time_string
+
+        return map(process_time_string, file_time_list)
+
+    def _update_file_times(self):
+        self._file_times = {}
         new_filenames_list = []
-        existing_filnames_list = []
-        for filename in filename_list:
+        for filename in self._filenames:
             if filename in self._all_file_times:
-                existing_filnames_list.append(filename)
+                self._file_times[filename] = self._all_file_times[filename]
             else:
                 new_filenames_list.append(filename)
 
-        self._file_times = dict(
-            filter(lambda item: item[0] in existing_filnames_list,
-                   self._file_times.items()))
-
         log_info(f'Adding {len(new_filenames_list)} new files.')
-        new_times_list = subprocess.check_output(
-            [SCRIPT_DIR / 'find_image_times.sh', *new_filenames_list],
-            text=True).split('\n')[:-1]
+        new_times_list = self._obtain_file_time_list(new_filenames_list)
         for new_filename, new_time_string in zip(new_filenames_list,
                                                  new_times_list):
-            splitted = new_time_string.split()
-            if splitted[1][:2] == '24':
-                new_time_string = '{} {}'.format(splitted[0],
-                                                 '00' + splitted[1][2:])
-            self._file_times[new_filename] = datetime.datetime.fromisoformat(
-                new_time_string)
+            self._file_times[new_filename] = new_time_string
             self._all_file_times[new_filename] = self._file_times[new_filename]
+
+        if self._cache_data and len(new_filenames_list) > 0:
+            self._write_cached_file_times()
 
     def _update_filtered_file_times(self):
         self._filtered_file_times = dict(
-            filter(lambda item: self.settings.times.includes(item[1]),
-                   self._file_times.items()))
+            filter(
+                lambda item: self.settings.times.includes(
+                    datetime.datetime.fromisoformat(item[1])),
+                self._file_times.items()))
 
 
 class Displayer:
