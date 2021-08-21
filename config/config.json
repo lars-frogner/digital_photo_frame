@@ -47,7 +47,7 @@
         }
     },
     "display_settings": {
-        "files": {
+        "folders": {
             "group": "files",
             "name": "Bildemapper",
             "type": "TEXT",
