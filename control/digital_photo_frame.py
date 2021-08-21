@@ -168,6 +168,9 @@ class TimePeriods:
     def any():
         return TimePeriods('any')
 
+    def is_any(self):
+        return self == ANY_TIME_PERIOD
+
     def includes(self, date):
         return len(list(filter(lambda time: time.includes(date),
                                self.times))) > 0
@@ -469,16 +472,18 @@ class FileManager:
         self._file_list_path = SCRIPT_DIR / '.filelist.txt'
         self._file_data_path = SCRIPT_DIR / '.filedata.json'
 
-        self._all_file_times = {}
-        if self._cache_data:
-            self._read_cached_file_times()
-        self._filenames = {}
+        self._filenames = []
         self._read_filenames()
-        self._file_times = {}
-        self._update_file_times()
 
-        self._filtered_file_times = {}
-        self._update_filtered_file_times()
+        self._all_file_times = {}
+        self._file_times = {}
+        if not self.settings.times.is_any():
+            if self._cache_data:
+                self._read_cached_file_times()
+            self._update_file_times()
+
+        self._filtered_filenames = []
+        self._update_filtered_filenames()
 
         self.update_file_list()
 
@@ -496,20 +501,38 @@ class FileManager:
 
     def reread_settings(self):
         self.settings.read_settings()
+
+        files_changed = False
+
         if self.settings.get_change_flag('folders'):
             self._read_filenames()
-            self._update_file_times()
+            if not self.settings.times.is_any():
+                self._update_file_times()
+            files_changed = True
+
         if self.settings.get_change_flag('times'):
-            self._update_filtered_file_times()
+            if not self.settings.times.is_any() and len(
+                    self._all_file_times) == 0:
+                if self._cache_data:
+                    self._read_cached_file_times()
+                self._update_file_times()
+            files_changed = True
+
         self.settings.reset_change_flags()
+
+        if files_changed:
+            self._update_filtered_filenames()
 
     def update_file_list(self):
         with open(self.file_list_path, 'w') as f:
-            f.write('\n'.join(self._filtered_file_times.keys()))
+            f.write('\n'.join(self._filtered_filenames))
 
     def _read_cached_file_times(self):
-        with open(self._file_data_path, 'r') as f:
-            self._all_file_times = json.load(f)
+        try:
+            with open(self._file_data_path, 'r') as f:
+                self._all_file_times = json.load(f)
+        except FileNotFoundError:
+            self._all_file_times = {}
 
     def _write_cached_file_times(self):
         with open(self._file_data_path, 'w') as f:
@@ -549,7 +572,7 @@ class FileManager:
             else:
                 new_filenames_list.append(filename)
 
-        log_info(f'Adding {len(new_filenames_list)} new files.')
+        log_info(f'Processing {len(new_filenames_list)} new files.')
         new_times_list = self._obtain_file_time_list(new_filenames_list)
         for new_filename, new_time_string in zip(new_filenames_list,
                                                  new_times_list):
@@ -559,12 +582,18 @@ class FileManager:
         if self._cache_data and len(new_filenames_list) > 0:
             self._write_cached_file_times()
 
-    def _update_filtered_file_times(self):
-        self._filtered_file_times = dict(
-            filter(
-                lambda item: self.settings.times.includes(
-                    datetime.datetime.fromisoformat(item[1])),
-                self._file_times.items()))
+    def _update_filtered_filenames(self):
+        if self.settings.times.is_any():
+            self._filtered_filenames = self._filenames
+        else:
+            self._filtered_filenames = [
+                filename for filename, time_string in self._file_times.items()
+                if self.settings.times.includes(
+                    datetime.datetime.fromisoformat(time_string))
+            ]
+        log_info(
+            f'Including {len(self._filtered_filenames)} of {len(self._filenames)} files.'
+        )
 
 
 class Displayer:
