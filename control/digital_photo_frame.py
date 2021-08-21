@@ -253,10 +253,6 @@ class Settings:
         return self._file_locator
 
     @property
-    def file_path(self):
-        return self._file_path
-
-    @property
     def folders(self):
         return self._folders
 
@@ -313,7 +309,7 @@ class Settings:
             self._register_change('randomize')
             log_info(f'Using randomize: {self.randomize}')
 
-    def _process_folders_text(self, folders_text):
+    def _process_folders_text(self, folders_text, error_message=None):
         folder_strings = map(str.strip, folders_text.split(','))
         folder_paths = map(pathlib.Path, folder_strings)
 
@@ -321,17 +317,17 @@ class Settings:
             filter(None,
                    map(self.file_locator.generate_valid_path, folder_paths)))
         if not valid_paths:
-            log_error(
-                f'No valid folders specified in \'folders\' entry in {self.file_path}.'
-            )
+            if error_message is not None:
+                log_error(error_message)
             return self.folders
 
         return valid_paths
 
-    def _process_times_text(self, time_text):
+    def _process_times_text(self, time_text, error_message=None):
         matches = [match[0] for match in self._time_text_re.findall(time_text)]
         if not matches:
-            log_error(f'No valid \'time\' entry in {self.file_path}.')
+            if error_message is not None:
+                log_error(error_message)
             return self.times
         return TimePeriods(*matches)
 
@@ -364,6 +360,10 @@ class SettingsFile(Settings):
         self._randomize_re = re.compile(r'random(?:i[sz]e)?\s*$',
                                         flags=re.MULTILINE | re.IGNORECASE)
 
+    @property
+    def file_path(self):
+        return self._file_path
+
     def read_settings(self):
         if not self.file_path.is_file():
             log_error(f'Config file \'{self.file_path}\' does not exist.',
@@ -380,7 +380,11 @@ class SettingsFile(Settings):
             return self.folders
         folders_text = match[1]
 
-        return self._process_folders_text(folders_text)
+        return self._process_folders_text(
+            folders_text,
+            error_message=
+            f'No valid folders specified in \'folders\' entry in {self.file_path}.'
+        )
 
     def _parse_times(self, text):
         match = self._time_re.search(text)
@@ -388,7 +392,9 @@ class SettingsFile(Settings):
             log_error(f'No valid \'time\' entry in {self.file_path}.')
             return self.times
 
-        return self._process_times_text(match[1])
+        return self._process_times_text(
+            match[1],
+            error_message=f'No valid \'time\' entry in {self.file_path}.')
 
     def _parse_delay(self, text):
         match = self._delay_re.search(text)
@@ -420,13 +426,20 @@ class SettingsDatabase(Settings):
                                                        'folders')
         if folders_text is None:
             return None
-        return self._process_folders_text(','.join(folders_text.split('\n')))
+        return self._process_folders_text(
+            ','.join(folders_text.split('\n')),
+            error_message=
+            f'No valid folders specified in \'folders\' entry in database {self._database.name}.'
+        )
 
     def _parse_times(self, database):
         times_text = database.read_values_from_table(self._table_name, 'times')
         if times_text is None:
             return None
-        return self._process_times_text(','.join(times_text.split('\n')))
+        return self._process_times_text(
+            ','.join(times_text.split('\n')),
+            error_message=
+            f'No valid \'times\' entry in database {self._database.name}.')
 
     def _parse_delay(self, database):
         delay = database.read_values_from_table(self._table_name, 'delay')
