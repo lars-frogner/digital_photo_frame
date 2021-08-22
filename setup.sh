@@ -24,6 +24,8 @@ DPF_MODE_LOCK_FILE=$DPF_MODE_LOCK_DIR/free
 
 INSTALL_PACKAGES=true
 if [[ "$INSTALL_PACKAGES" = true ]]; then
+    sudo apt -y install feh
+
     # Install required Python packages
     pip3 install -r requirements.txt
 fi
