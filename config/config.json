@@ -82,6 +82,12 @@
             "name": "Vis i vilkårlig rekkefølge",
             "type": "BOOLEAN NOT NULL",
             "initial_value": false
+        },
+        "preload": {
+            "group": "display",
+            "name": "Last bilder på forhånd",
+            "type": "BOOLEAN NOT NULL",
+            "initial_value": false
         }
     },
     "display_groups": {

@@ -228,9 +228,10 @@ class Settings:
                  default_times=ANY_TIME_PERIOD,
                  default_delay=10,
                  default_randomize=False,
+                 default_preload=False,
                  default_feh_flags=[
-                     '--preload', '--borderless', '--fullscreen',
-                     '--auto-zoom', '--auto-rotate', '--hide-pointer'
+                     '--borderless', '--fullscreen', '--auto-zoom',
+                     '--auto-rotate', '--hide-pointer'
                  ]):
         self._file_locator = file_locator
 
@@ -238,6 +239,7 @@ class Settings:
         self.default_times = default_times
         self.default_delay = default_delay
         self.default_randomize = default_randomize
+        self.default_preload = default_preload
 
         self._default_feh_flags = default_feh_flags
 
@@ -245,6 +247,7 @@ class Settings:
         self._times = default_times
         self._delay = default_delay
         self._randomize = default_randomize
+        self._preload = default_preload
 
         self._change_flags = {'any': False}
 
@@ -273,6 +276,10 @@ class Settings:
         return self._randomize
 
     @property
+    def preload(self):
+        return self._preload
+
+    @property
     def changed(self):
         return self.get_change_flag('any')
 
@@ -285,8 +292,12 @@ class Settings:
         return ['--randomize'] if self.randomize else []
 
     @property
+    def feh_preload_arguments(self):
+        return ['--preload'] if self.preload else []
+
+    @property
     def feh_arguments(self):
-        return self._default_feh_flags + self.feh_delay_arguments + self.feh_randomize_arguments
+        return self._default_feh_flags + self.feh_delay_arguments + self.feh_randomize_arguments + self.feh_preload_arguments
 
     def _parse_settings(self, resource):
         folders = self._parse_folders(resource)
@@ -312,6 +323,12 @@ class Settings:
             self._randomize = randomize
             self._register_change('randomize')
             log_info(f'Using randomize: {self.randomize}')
+
+        preload = self._parse_preload(resource)
+        if preload != self.preload:
+            self._preload = preload
+            self._register_change('preload')
+            log_info(f'Using preload: {self.preload}')
 
     def _process_folders_text(self, folders_text, error_message=None):
         folder_strings = map(str.strip, folders_text.split(','))
@@ -352,17 +369,20 @@ class SettingsFile(Settings):
         super().__init__(*args, **kwargs)
         self._file_path = pathlib.Path(file_path)
 
-        self._folder_re = re.compile(r'^folders:(.+)$',
+        self._folder_re = re.compile(r'^\s*folders:(.+)$',
                                      flags=re.MULTILINE | re.IGNORECASE)
 
-        self._time_re = re.compile(r'^time:(.+)$',
+        self._time_re = re.compile(r'^\s*time:(.+)$',
                                    flags=re.MULTILINE | re.IGNORECASE)
 
-        self._delay_re = re.compile(r'^delay:\s*([0-9]+(?:\.[0-9]+)?)\s*$',
+        self._delay_re = re.compile(r'^\s*delay:\s*([0-9]+(?:\.[0-9]+)?)\s*$',
                                     flags=re.MULTILINE | re.IGNORECASE)
 
-        self._randomize_re = re.compile(r'random(?:i[sz]e)?\s*$',
+        self._randomize_re = re.compile(r'^\s*random(?:i[sz]e)?\s*$',
                                         flags=re.MULTILINE | re.IGNORECASE)
+
+        self._preload_re = re.compile(r'^\s*preload\s*$',
+                                      flags=re.MULTILINE | re.IGNORECASE)
 
     @property
     def file_path(self):
@@ -414,6 +434,12 @@ class SettingsFile(Settings):
         else:
             return False
 
+    def _parse_preload(self, text):
+        if self._preload_re.search(text):
+            return True
+        else:
+            return False
+
 
 class SettingsDatabase(Settings):
     def __init__(self, database, *args, **kwargs):
@@ -459,6 +485,13 @@ class SettingsDatabase(Settings):
             return self.randomize
         else:
             return bool(randomize)
+
+    def _parse_preload(self, database):
+        preload = database.read_values_from_table(self._table_name, 'preload')
+        if preload is None:
+            return self.preload
+        else:
+            return bool(preload)
 
 
 class FileManager:
