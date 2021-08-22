@@ -2,7 +2,7 @@
 require_once(dirname(__DIR__) . '/config/error_config.php');
 require_once(dirname(__DIR__) . '/config/settings_config.php');
 
-define('STRING_TYPES', array('CHAR', 'VARCHAR'));
+define('STRING_TYPES', array('CHAR', 'VARCHAR', 'TEXT'));
 define('INT_TYPES', array('TINYINT', 'INT', 'BOOLEAN'));
 define('FLOAT_TYPES', array('FLOAT', 'DOUBLE'));
 
